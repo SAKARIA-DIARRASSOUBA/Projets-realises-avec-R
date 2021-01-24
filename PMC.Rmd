@@ -1,0 +1,213 @@
+---
+title: "PMC avec Comparaison"
+author: "DIARRASSOUBA SAKARIA"
+date: "18/03/2020"
+output:
+  pdf_document: default
+  word_document: default
+  html_document:
+    df_print: paged
+toc: true
+---
+
+
+## Introduction
+
+ Dans cette analyse, nous utiliserons les données d'une entreprise d'automobile qui vient de faire sortir un nouveau produit: voiture de luxe  absolument pas chère. Pour faire le mrketing de cette voiture en masse, elle a mis une publicité de cette voiture sur les réseau sociaux, et les utilisation de ces réseaux sociaux, voyant la voiture, décident d'acheter la voiture "OUI" ou "NON". Cette entreprise contient des données de base comme l'identité du client, l'âge, le sexe, le salaire et la reponse.
+ L'objetif de notre analyse est de comparaison des performances du PMC et d'autres méthodes statistiques
+
+```{r,include=FALSE}
+library(Deriv)
+library(neuralnet)
+library(MASS)
+library(randomForest) 
+library(deepnet)
+library(caret)
+library(e1071)
+library(xgboost)
+```
+## importation des données
+```{r}
+cust=read.csv("Social_Network_Ads.csv",header = T)
+donnes=data.frame(cust[1],cust[2],cust[3],cust[4],cust[5])
+names(donnes)=c("ID","Sexe","Age","salaire","acheté")
+head(donnes)
+```
+
+Dans la variable **acheté** on a:\newline
+** 0 : l'utisateur n'a pas acheté la voiture** \newline
+** 1: l'l'utisateur a acheté la voiture** \newline
+Chaque ligne représente un client, On n'aura pas besoin de la variable qualitative **"Age"**, car elle n'impacte pas la variable **"acheté"** et de meme la varaiable **"ID"** n'a pas de correlation avec la variable **"acheté"**. Donc suprimons ces variables
+```{r}
+client=donnes[,c(3:5)]
+head(client)
+```
+On  déccoupe le jeu de données client en 2 parties de manière aléatoire, la première partie  servira à l’apprentissage du modèle et la seconde pour la validation du modèle:
+
+```{r}
+set.seed(1234)
+names(client)=c("X1","X2","X3")
+apprent_idx <- sample(nrow(client), 7/8 * nrow(client))
+client_apprent <- client[apprent_idx, ]
+client_test <- client[-apprent_idx, ]
+dim(client_apprent)
+head(client_apprent)
+
+```
+## Standartdisation des données
+On applique la standardisation sur les colonnes **Age** et **salaire**des données d'apprentissages  et de test
+```{r}
+apprent_ech=scale(client_apprent[1:2],center = T,scale = T)
+x3=data.frame(client_apprent$X3) 
+train=cbind(apprent_ech,x3) # on ajoute la colonne ciblé : acheté
+
+```
+
+
+```{r}
+test_ech=scale(client_test[1:2],center = T,scale = T)
+x3=data.frame(client_test$X3)
+test=cbind(test_ech,x3)
+head(test)
+```
+
+
+notre   variable cible ** acheté** est codée en  0/1.
+L’algorithme n’a jamais pu converger lors de l’apprentissage du
+modèle. Et pourtant j’y ai passé du temps, en essayant de jouer sur les différents
+paramètres.\newline
+
+Selon moi, le problème vient de l’estimation des probabilités à l’aide de la fonction de transfert sigmoïde. Les valeurs sont très proches de 0 ou 1, là où les dérivées (gradients)
+sont quasi-nulles. Donc les corrections des coefficients se font mal durant le processus
+d’apprentissage. Il n’est pas possible de progresser efficacement vers la minimisation de la
+fonction de perte.\newline
+
+ C'est ainsi que j'ai codé la variable cible en **0.8 pour 1** et ** 0.2  pour 0** lorsqu’on utilise la fonction de transfert sigmoïde. On situera ainsi dans la zone où sa pente reste importante.
+
+```{r}
+y_train <- ifelse(train$client_apprent.X3=="1",0.8,0.2)
+print(table(y_train))
+y_test=ifelse(test$client_test.X3=="1",0.8,0.2)
+print(table(y_test))
+```
+## apprentissage du modele
+On observe 2 paramètres clés : **hidden** permet de spécifier le nombre de neurones dans la
+couche cachée, s’il y a plusieurs couches, nous utilisons un vecteur\newline
+**linear.output = logistic** introduit la fonction d’activation logistique dans le neurone de sortie.
+```{r}
+# le parametre hidden =c(3,5,10) est optimale
+modele <- neuralnet(y_train ~ X1 + X2, data= train,hidden = c(3,5,10), act.fct = "logistic")
+
+plot(modele)
+
+```
+Le réseau a 3 couches cachés de 3 unités, ensuite 5 unités puis 10 unités  et le biais est bien présent sur chaque couche.
+![Caption for the picture.](pmc.png)
+
+J' utilise la fonction compute() pour obtenir les probabilités d’affectation en
+prédiction sur l’échantillon test. Voici les 10 premières valeurs
+```{r}
+#prédiction - proba d'affectation
+proba_pred_modele <- compute(modele,covariate=test[-ncol(test)])
+print(proba_pred_modele$net.result[1:10])
+```
+Je les compare au seuil 0.5 pour obtenir les classes prédites. Il est dès lors possible de
+confronter les valeurs observées et prédites de la variable cible.
+
+Au passage, une fonction pour donner en quelque sorte la matrice de confusion
+```{r}
+#fonction pour evaluation des modèles
+evaluation.prediction <- function(y_obs,y_pred){
+ #matrice de confusion
+ mc <- table(y_obs,y_pred)
+ print("Matrice de confusion")
+ print(mc)
+ #taux d'erreur
+ err <- 1-sum(diag(mc))/sum(mc)
+ print(paste("Taux d'erreur =", round(err,3)))
+ #precision
+ precision <- sum(diag(mc))/sum(mc)
+ print(paste("Precision =",round(precision,3)))
+}
+```
+Nous les comparons au seuil 0.5 pour obtenir les classes prédites. Il est dès lors possible de
+confronter les valeurs observées et prédites de la variable cible.
+```{r}
+#traduire en "yes" "no" en comparant à 0.5
+pred_modele <- ifelse(proba_pred_modele$net.result > 0.5,"yes","no")
+
+# evaluation
+evaluation.prediction(test$client_test.X3,pred_modele)
+```
+
+
+
+Résumé, j ai 3 mal classés, avec un taux d'erreu de **6%**, et une précision de ** 94% **
+
+
+# D'autres classifieurs
+
+## méthode SVM
+On utilise le package **‘’e1071’’** pour l’implémentation des SVM. Nous demandons à la
+procédure svm() de construire un classifieur linéaire (kernel = ‘linear’) 
+```{r}
+#library(e1071)
+modele_svm=svm(y_train ~ X1 + X2, data=train,  kernel="linear")
+
+```
+
+```{r}
+pred_svm=round(predict(modele_svm,test))
+evaluation.prediction(test$client_test.X3,pred_svm)
+```
+
+
+Résumé, j ai 8 mal classés, avec un taux d'erreu de **16%**, et une précision de ** 84% **
+
+
+
+```{r}
+X_train <- as.matrix(train[-ncol(train)])
+X_test <- as.matrix(test[-ncol(test)])
+```
+
+
+
+
+## méthode deepnet
+```{r}
+
+#library(deepnet)
+#apprentissage
+set.seed(100)
+
+deep_modele <- nn.train(x=X_train,y=y_train,hidden=c(5),numepochs=250)
+
+```
+
+
+```{r}
+#proba prediction
+proba.pred.dpn <- nn.predict(deep_modele,X_test)
+summary(proba.pred.dpn)
+```
+
+
+```{r}
+#prédiction
+pred.dpn <- ifelse(proba.pred.dpn>0.5,"yes","no")
+#evaluation
+evaluation.prediction(test$client_test.X3,pred.dpn)
+```
+
+
+Résumé, j ai 8 mal classés, avec un taux d'erreu de **16%**, et une précision de ** 84% **
+
+|Package   |Taux erreur| prédiction|
+|----|----|----|
+|neuralnet| 0.06 |  0.94 | 
+|Deepnet| 0.16 | 0.84 |
+|SVM | 0.16 | 0.84 |
+
+l'idée était de voir un peu le comportement des différentes méthodes de R dans
+l’implémentation d’un perceptron multicouche. Au vu des performences, il ressort que le neuralnet a une très bonne prediction
